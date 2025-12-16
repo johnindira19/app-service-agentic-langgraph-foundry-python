@@ -1,6 +1,6 @@
-# Agentic Azure App Service app with LangGraph and Azure AI Foundry Agent Service
+# Agentic Azure App Service app with LangGraph and Foundry Agent Service
 
-This repository demonstrates how to build a modern FatAPI web application that integrates with both Azure AI Foundry Agents and LangGraph Agents. It provides a simple CRUD task list and two interactive chat agents.
+This repository demonstrates how to build a modern FastAPI web application that integrates with both Foundry Agent Service and LangGraph agents. It provides a simple CRUD task list and two interactive chat agents.
 
 ## Getting Started
 
@@ -10,8 +10,8 @@ See [Tutorial: Build an agentic web app in Azure App Service with LangGraph or A
 
 - **Task List**: Simple CRUD web app application.
 - **LangGraph Agent**: Chat with an agent powered by LangGraph.
-- **Azure AI Foundry Agent**: Chat with an agent powered by Azure AI Foundry Agent Service.
-- **OpenAPI Schema**: Enables integration with Azure AI Foundry agents.
+- **Foundry Agent Service**: Chat with an agent powered by Foundry Agent Service.
+- **OpenAPI Schema**: Enables integration with Foundry Agent Service.
 
 ## Project Structure
 
@@ -29,7 +29,7 @@ src/
 ├── azure.yaml                   # Azure Developer CLI config
 ├── agents/                      # AI agent implementations
 │   ├── __init__.py
-│   ├── foundry_task_agent.py    # Azure AI Foundry agent
+│   ├── foundry_task_agent.py    # Foundry agent
 │   └── langgraph_task_agent.py  # LangGraph agent
 ├── models/                      # Pydantic models for data validation
 │   └── __init__.py

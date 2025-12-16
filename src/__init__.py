@@ -1,7 +1,7 @@
 """
 Task Manager FastAPI Application
 
-A Python FastAPI app that integrates with both Azure AI Foundry Agents and LangGraph Agents.
+A Python FastAPI app that integrates with both Foundry Agent Service and LangGraph agents.
 """
 
 from .models import *

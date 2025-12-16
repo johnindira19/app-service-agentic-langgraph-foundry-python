@@ -8,31 +8,33 @@ from ..models import ChatMessage, Role
 
 class FoundryTaskAgent:
     """
-    Agent that interfaces with Azure AI Foundry to process user messages.
+    Agent that interfaces with Foundry Agent Service to process user messages.
     
     This agent:
-    - Initializes connection to Azure AI Foundry using environment variables
-    - Manages agent session and conversation thread
+    - Initializes connection to Foundry Agent Service using environment variables
+    - Retrieves an existing agent by name from Foundry
+    - Manages agent session and conversation
     - Sends user messages to agent and retrieves responses
     - Handles errors and configuration issues gracefully
     
     Environment variables required:
-    - AZURE_AI_FOUNDRY_PROJECT_ENDPOINT: The endpoint URL for the Azure AI Foundry project
-    - AZURE_AI_FOUNDRY_AGENT_ID: The identifier of the agent to use
+    - AZURE_AI_FOUNDRY_PROJECT_ENDPOINT: The endpoint URL for the Foundry project
+    - AZURE_AI_FOUNDRY_AGENT_NAME: The name of the agent to retrieve
     """
     
     def __init__(self, task_service: TaskService):
         self.task_service = task_service
         self.project_client = None
-        self.agent_id = None
-        self.thread_id = None
+        self.openai_client = None
+        self.agent = None
+        self.conversation_id = None
         
         # Initialize the agent
         endpoint = os.getenv("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT")
-        agent_id = os.getenv("AZURE_AI_FOUNDRY_AGENT_ID")
+        agent_name = os.getenv("AZURE_AI_FOUNDRY_AGENT_NAME")
         
-        if not endpoint or not agent_id:
-            print("Azure AI Foundry configuration missing. Set AZURE_AI_FOUNDRY_PROJECT_ENDPOINT and AZURE_AI_FOUNDRY_AGENT_ID")
+        if not endpoint or not agent_name:
+            print("Foundry Agent Service configuration missing. Set AZURE_AI_FOUNDRY_PROJECT_ENDPOINT and AZURE_AI_FOUNDRY_AGENT_NAME")
             return
         
         try:
@@ -41,18 +43,26 @@ class FoundryTaskAgent:
                 endpoint=endpoint,
                 credential=DefaultAzureCredential()
             )
-            self.agent_id = agent_id
             
-            # Create a thread for this session
-            thread = self.project_client.agents.threads.create()
-            self.thread_id = thread.id
-            print(f"Created thread: {self.thread_id}")
-            print("Azure AI Foundry Task Agent initialized successfully")
+            # Get the OpenAI client for conversation operations
+            self.openai_client = self.project_client.get_openai_client()
+            
+            # Find the existing agent by name
+            self.agent = self.project_client.agents.get(agent_name)
+            
+            if not self.agent:
+                print(f"Agent with name '{agent_name}' not found in project.")
+                return
+                        
+            # Create a conversation for this session
+            conversation = self.openai_client.conversations.create()
+            self.conversation_id = conversation.id
+            print("Foundry agent initialized successfully")
             
         except ImportError as e:
             print(f"Azure AI Projects SDK not available. Install azure-ai-projects package: {e}")
         except Exception as e:
-            print(f"Failed to initialize Azure AI Foundry agent: {e}")
+            print(f"Failed to initialize Foundry agent: {e}")
     
     async def process_message(self, message: str) -> ChatMessage:
         """
@@ -64,68 +74,35 @@ class FoundryTaskAgent:
         Returns:
             ChatMessage object containing the assistant's response
         """
-        if not self.project_client or not self.agent_id or not self.thread_id:
+        if not self.project_client or not self.agent or not self.conversation_id or not self.openai_client:
             return ChatMessage(
                 role=Role.ASSISTANT,
-                content="Azure AI Foundry agent is not properly configured. Please check your settings."
+                content="Foundry Agent Service is not properly configured. Please check your settings."
             )
         
         try:
-            # Create the message in the thread
-            message_obj = self.project_client.agents.messages.create(
-                thread_id=self.thread_id,
-                role="user",
-                content=message
+            # Add user message to the conversation
+            self.openai_client.conversations.items.create(
+                conversation_id=self.conversation_id,
+                items=[{"type": "message", "role": "user", "content": message}],
             )
-            print(f"Created message, ID: {message_obj.id}")
             
-            # Create and process the run
-            run = self.project_client.agents.runs.create_and_process(
-                thread_id=self.thread_id,
-                agent_id=self.agent_id
+            # Create response using the agent
+            response = self.openai_client.responses.create(
+                conversation=self.conversation_id,
+                extra_body={"agent": {"name": self.agent.name, "type": "agent_reference"}},
+                input="",
             )
-            print(f"Run finished with status: {run.status}")
+            # Extract the response text
+            response_text = response.output_text if hasattr(response, 'output_text') else str(response.output)
             
-            if run.status == "failed":
-                print(f"Run failed: {run.last_error}")
-                return ChatMessage(
-                    role=Role.ASSISTANT,
-                    content="I encountered an error processing your request. Please try again."
-                )
-            
-            if run.status == "completed":
-                # Fetch the latest messages from the thread
-                messages = self.project_client.agents.messages.list(thread_id=self.thread_id)
-                
-                # Find the latest assistant message
-                for msg in messages:
-                    if msg.role == "assistant":
-                        # Extract text content from the message
-                        content = ""
-                        if hasattr(msg, 'content') and msg.content:
-                            for content_item in msg.content:
-                                if hasattr(content_item, 'text') and hasattr(content_item.text, 'value'):
-                                    content += content_item.text.value
-                                elif hasattr(content_item, 'value'):
-                                    content += str(content_item.value)
-                        
-                        return ChatMessage(
-                            role=Role.ASSISTANT,
-                            content=content if content else "I received your message but couldn't generate a response."
-                        )
-                
-                return ChatMessage(
-                    role=Role.ASSISTANT,
-                    content="I processed your request but couldn't find a response."
-                )
-            else:
-                return ChatMessage(
-                    role=Role.ASSISTANT,
-                    content=f"I encountered an issue processing your request. Status: {run.status}"
-                )
+            return ChatMessage(
+                role=Role.ASSISTANT,
+                content=response_text if response_text else "I received your message but couldn't generate a response."
+            )
                 
         except Exception as e:
-            print(f"Error processing message with Azure AI Foundry: {e}")
+            print(f"Error processing message with Foundry Agent Service: {e}")
             import traceback
             traceback.print_exc()
             return ChatMessage(
@@ -134,6 +111,6 @@ class FoundryTaskAgent:
             )
     
     async def cleanup(self):
-        """Cleanup method for session management (no-op for Azure AI Foundry)."""
-        # Azure AI Foundry handles cleanup automatically
+        """Cleanup method for session management (no-op for Foundry Agent Service)."""
+        # Foundry Agent Service handles cleanup automatically
         pass

@@ -27,7 +27,7 @@ class TaskManagerApp:
         self.app = FastAPI(
             title="Task Manager API",
             version="1.0.0",
-            description="A simple task management API for Azure AI Foundry Agents",
+            description="A simple task management API for Foundry Agent Service",
             servers=[
                 {"url": server_url, "description": "Task Manager API Server"}
             ]
