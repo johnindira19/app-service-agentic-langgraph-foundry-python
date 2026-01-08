@@ -1,6 +1,10 @@
 import os
 import uuid
+import logging
+import asyncio
 from typing import Optional, Dict, Any
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from langchain_openai import AzureChatOpenAI
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from langgraph.prebuilt import create_react_agent
@@ -9,6 +13,8 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 from ..services import TaskService
 from ..models import ChatMessage, Role
+
+logger = logging.getLogger(__name__)
 
 
 class CreateTaskInput(BaseModel):
@@ -30,6 +36,20 @@ class DeleteTaskInput(BaseModel):
     id: int = Field(description="The ID of the task to delete")
 
 
+class GetTimeInput(BaseModel):
+    timezone: str = Field(default="Asia/Kolkata", description="IANA timezone (e.g., Asia/Kolkata)")
+
+
+def get_time_func(timezone: str = "Asia/Kolkata") -> str:
+    """Return current time in the given IANA timezone as a formatted string."""
+    try:
+        tz = ZoneInfo(timezone)
+        now = datetime.now(tz)
+        return now.strftime("%Y-%m-%d %H:%M:%S %Z%z")
+    except Exception as e:
+        return f"Failed to get time for {timezone}: {e}"
+
+
 class LangGraphTaskAgent:
     """
     LangGraph-based agent for task management chat.
@@ -46,13 +66,14 @@ class LangGraphTaskAgent:
         self.agent = None
         self.memory = InMemorySaver()
         self.session_ids: Dict[str, str] = {}
+        self.session_locks: Dict[str, asyncio.Lock] = {}
         
         try:
             endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
             deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
             
             if not endpoint or not deployment_name:
-                print("Azure OpenAI configuration missing for LangGraph agent")
+                logger.warning("Azure OpenAI configuration missing for LangGraph agent")
                 return
             
             # Initialize Azure OpenAI client
@@ -74,15 +95,16 @@ class LangGraphTaskAgent:
                 self._get_tasks_tool(),
                 self._get_task_tool(),
                 self._update_task_tool(),
-                self._delete_task_tool()
+                self._delete_task_tool(),
+                self._get_time_tool()
             ]
             
             # Create the agent
             self.agent = create_react_agent(self.llm, tools, checkpointer=self.memory)
-            print("LangGraph Task Agent initialized successfully")
+            logger.info("LangGraph Task Agent initialized successfully")
             
         except Exception as e:
-            print(f"Failed to initialize LangGraph agent: {e}")
+            logger.exception("Failed to initialize LangGraph agent")
     
     def _create_task_tool(self):
         @tool("createTask", args_schema=CreateTaskInput)
@@ -121,6 +143,19 @@ class LangGraphTaskAgent:
             return f'Task {task.id}: "{task.title}" - Status: {status}'
         
         return get_task
+
+    def _extract_assistant_text(self, result: Any) -> str:
+        """Safely extract assistant text from agent result structure."""
+        try:
+            messages = result.get("messages", []) if isinstance(result, dict) else []
+            for msg in reversed(messages):
+                content = getattr(msg, "content", None) or (msg.get("content") if isinstance(msg, dict) else None)
+                mtype = getattr(msg, "type", None) or (msg.get("type") if isinstance(msg, dict) else None)
+                if mtype in ("ai", "assistant") and content:
+                    return content
+        except Exception:
+            logger.exception("Failed to extract assistant text from result")
+        return "I apologize, but I couldn't process your request."
     
     def _update_task_tool(self):
         @tool("updateTask", args_schema=UpdateTaskInput)
@@ -143,6 +178,14 @@ class LangGraphTaskAgent:
             return f'Task {id} deleted successfully.'
         
         return delete_task
+
+    def _get_time_tool(self):
+        @tool("getTime", args_schema=GetTimeInput)
+        async def get_time(timezone: str = "Asia/Kolkata") -> str:
+            """Get current time in a given timezone (IANA format)"""
+            return get_time_func(timezone)
+
+        return get_time
     
     async def process_message(self, message: str, session_id: Optional[str] = None) -> ChatMessage:
         """
@@ -180,24 +223,16 @@ class LangGraphTaskAgent:
                 config=config
             )
             
-            # Extract the assistant's response
-            assistant_messages = [
-                msg for msg in result["messages"] 
-                if hasattr(msg, 'type') and msg.type == "ai"
-            ]
-            
-            if assistant_messages:
-                response_content = assistant_messages[-1].content
-            else:
-                response_content = "I apologize, but I couldn't process your request."
-            
+            # Extract the assistant's response safely
+            response_content = self._extract_assistant_text(result)
+
             return ChatMessage(
                 role=Role.ASSISTANT,
                 content=response_content
             )
-            
+
         except Exception as e:
-            print(f"Error processing message with LangGraph agent: {e}")
+            logger.exception("Error processing message with LangGraph agent")
             return ChatMessage(
                 role=Role.ASSISTANT,
                 content="I apologize, but I encountered an error processing your request."

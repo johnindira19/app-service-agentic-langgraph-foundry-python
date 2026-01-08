@@ -43,3 +43,53 @@ tasks.db                         # SQLite database file
 requirements.txt                 # Python dependencies
 README.md                        # Project documentation
 ```
+
+### Quick runtime checks
+
+- Create a `.env` from the supplied template and populate Azure OpenAI values:
+```
+cp .env.example .env
+# Edit .env to set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT_NAME
+```
+
+- `.env.example` contains:
+```
+AZURE_OPENAI_ENDPOINT=https://<your-openai-resource>.openai.azure.com
+AZURE_OPENAI_DEPLOYMENT_NAME=<your-deployment-name>
+# Optional (service principal):
+# AZURE_CLIENT_ID=
+# AZURE_CLIENT_SECRET=
+# AZURE_TENANT_ID=
+PORT=3000
+```
+
+- Start server (uses virtual env `./venv` if you created it):
+```
+./venv/bin/uvicorn src.app:app --host 0.0.0.0 --port 3000
+```
+
+- Check initialization logs for LangGraph messages (look for `LangGraph Task Agent initialized successfully` or `Azure OpenAI configuration missing for LangGraph agent`):
+```
+tail -n 100 server.log
+```
+
+- Health check endpoint (added):
+```
+curl -sS http://localhost:3000/health | jq .
+```
+
+- Run integration tests locally (uses a mocked LangGraph agent):
+```
+pytest -q
+```
+
+- GitHub Actions CI (added): `.github/workflows/ci.yml` — installs dependencies and runs tests on push/pull-request to `main`.
+
+- Test the LangGraph chat endpoint:
+```
+curl -sS -X POST http://localhost:3000/api/chat/langgraph \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Create a task named Test Task","sessionId":"session-1"}' | jq .
+```
+
+- If agents are configured, you can also use the OpenAPI UI at `/docs` to call `/api/chat/langgraph` or `/api/chat/foundry`.

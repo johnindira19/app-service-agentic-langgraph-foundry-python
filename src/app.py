@@ -66,6 +66,19 @@ class TaskManagerApp:
         if os.path.exists(static_dir):
             self.app.mount("/static", StaticFiles(directory=static_dir), name="static")
         
+        # Health endpoint for runtime checks
+        @self.app.get("/health")
+        async def health():
+            """Health check for the app and agent configuration."""
+            # Non-sensitive diagnostic flags (do NOT include secret contents)
+            return {
+                "status": "ok",
+                "langgraph_initialized": bool(self.langgraph_agent and self.langgraph_agent.agent),
+                "foundry_configured": bool(os.getenv("AZURE_AI_FOUNDRY_PROJECT_ENDPOINT") and os.getenv("AZURE_AI_FOUNDRY_AGENT_NAME")),
+                "azure_openai_endpoint_set": bool(os.getenv("AZURE_OPENAI_ENDPOINT")),
+                "azure_openai_deployment_set": bool(os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"))
+            }
+
         # Serve index.html for all other routes (SPA)
         @self.app.get("/")
         @self.app.get("/{path:path}")
